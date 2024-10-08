@@ -2,6 +2,7 @@ package logic
 
 import (
 	"encoding/hex"
+	"fmt"
 	"os"
 	"text/template"
 
@@ -51,6 +52,23 @@ func (c *AutoDeCompressAssembly) Assembly() error {
 	if err := comp.Compress(); err != nil {
 		return err
 	}
+	// 生成加密
+	if c.Isencrypt {
+		key := []byte(c.Password)
+		f, err := os.ReadFile(c.TargetPath)
+		if err != nil {
+			return err
+		}
+		encrypted, err := encrypt(key, IV, f)
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(c.TargetPath, encrypted, 0755); err != nil {
+			return err
+		}
+		fmt.Printf("Encryption Key:%s\n", hex.EncodeToString(key))
+		fmt.Printf("Encryption IV:%s\n", hex.EncodeToString(IV))
+	}
 	// 生成签名
 	var signature []byte
 	if c.IsSign {
@@ -68,7 +86,6 @@ func (c *AutoDeCompressAssembly) Assembly() error {
 			return err
 		}
 	}
-	// 生成加密
 	// 生成最终文件
 	f, err := os.ReadFile(c.TargetPath)
 	if err != nil {

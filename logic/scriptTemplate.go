@@ -26,6 +26,45 @@ if ! which xxd >/dev/null; then
     exit 1
 fi
 
+if [ -n "$signature" ] && [ -n "$isencrypt" ] && [ "$isencrypt" == "true" ]; then
+    if [ $# -ne 3 ]; then
+        echo "Error: The number of parameters is incorrect." >&2
+        rm -rf $tmp_dir
+        exit 1
+    fi
+    pubkey=$1
+    key=$2
+    iv=$3
+fi
+
+if [ -n "$signature" ] && [ -n "$isencrypt" ] && [ "$isencrypt" == "false" ]; then
+    if [ $# -ne 1 ]; then
+        echo "Error: The number of parameters is incorrect." >&2
+        rm -rf $tmp_dir
+        exit 1
+    fi
+    pubkey=$1
+fi
+
+if [ -z "$signature" ] && [ -n "$isencrypt" ]; then
+    if [ $# -ne 2 ]; then
+        echo "Error: The number of parameters is incorrect." >&2
+        rm -rf $tmp_dir
+        exit 1
+    fi
+    key=$1
+    iv=$2
+fi
+
+if [ -z "$signature" ] && [ -z "$isencrypt" ]; then
+    if [ $# -ne 0 ]; then
+        echo "Error: The number of parameters is incorrect." >&2
+        rm -rf $tmp_dir
+        exit 1
+    fi
+fi
+
+
 # 检查签名值是否不为空
 if [ -n "$signature" ]; then
     # 创建签名文件
@@ -34,7 +73,7 @@ if [ -n "$signature" ]; then
     tail -n+$ARCHIVE "$0" >${tmp_dir}/payload
     xxd -r -p ${tmp_dir}/signature ${tmp_dir}/signature.bin
     # 使用openssl验证签名
-    openssl dgst -verify $1 -signature ${tmp_dir}/signature.bin ${tmp_dir}/payload
+    openssl dgst -verify $pubkey -signature ${tmp_dir}/signature.bin ${tmp_dir}/payload >/dev/null 2>&1
     if [ $? -eq 0 ]; then
         echo "Signature verification succeeded."
     else
@@ -45,7 +84,16 @@ if [ -n "$signature" ]; then
 fi
 # 解密
 if [ "$isencrypt" == "true" ]; then
-    openssl enc -d -aes-256-cbc -in ${tmp_dir}/payload -out ${tmp_dir}/payload.tar.gz -k "123456"
+    tail -n+$ARCHIVE "$0" >${tmp_dir}/payload
+    openssl aes-256-cbc -d -in ${tmp_dir}/payload -out ${tmp_dir}/payload.tar.gz -K $key -iv $iv -nosalt >/dev/null 2>&1
+    if [ $? -eq 0 ]; then
+        echo "decrypt succeeded."
+        rm -rf ${tmp_dir}/payload
+    else
+        echo "Error: decrypt failed." >&2
+        rm -rf $tmp_dir
+        exit 1
+    fi
 else
     tail -n+$ARCHIVE "$0" >${tmp_dir}/payload.tar.gz
 fi
