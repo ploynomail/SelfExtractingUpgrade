@@ -12,12 +12,13 @@ import (
 )
 
 type AutoDeCompressAssembly struct {
-	TargetPath string // 压缩时输出的文件，解压时输入的文件
-	Path       string // 压缩时输入的文件目录，解压时输出的文件目录
-	IsSign     bool   // 是否需要签名
-	PrivateKey string // 私钥
-	Isencrypt  bool   // 是否需要加密
-	Password   string // 加密密码
+	TargetPath  string // 压缩时输出的文件，解压时输入的文件
+	Path        string // 压缩时输入的文件目录，解压时输出的文件目录
+	IsSign      bool   // 是否需要签名
+	OverallSign bool   // 是否需要整体签名
+	PrivateKey  string // 私钥
+	Isencrypt   bool   // 是否需要加密
+	Password    string // 加密密码
 }
 
 func NewAutoDeCompressAssembly(path, targetpath string) *AutoDeCompressAssembly {
@@ -38,6 +39,11 @@ func (c *AutoDeCompressAssembly) WithSign(privateKey string) *AutoDeCompressAsse
 func (c *AutoDeCompressAssembly) WithEncrypt(password string) *AutoDeCompressAssembly {
 	c.Isencrypt = true
 	c.Password = password
+	return c
+}
+
+func (c *AutoDeCompressAssembly) WithOverallSign() *AutoDeCompressAssembly {
+	c.OverallSign = true
 	return c
 }
 
@@ -114,6 +120,26 @@ func (c *AutoDeCompressAssembly) Assembly() error {
 	// 写入压缩包
 	if _, err := selfRunfile.Write(f); err != nil {
 		return err
+	}
+	selfRunfile.Sync()
+	selfRunfile.Close()
+
+	var overallSignature []byte
+	if c.OverallSign {
+		keys := keys.NewGenerateEcdsaKeys()
+		privateKey, err := keys.LoadPrivateKey(c.PrivateKey)
+		if err != nil {
+			return err
+		}
+		ff, err := os.Open(c.TargetPath + ".run")
+		if err != nil {
+			return err
+		}
+		overallSignature, err = signatureverify.SignFile(privateKey, ff)
+		if err != nil {
+			return err
+		}
+		fmt.Println("Overall Signature:", hex.EncodeToString(overallSignature))
 	}
 	return nil
 }

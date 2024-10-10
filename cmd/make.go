@@ -13,6 +13,7 @@ import (
 var destPath string
 var sourcePath string
 var isSign bool
+var OverallSign bool
 var isEncrypt bool
 var privateKey string
 var password string
@@ -42,6 +43,12 @@ var makeCmd = &cobra.Command{
 			}
 			adca.WithEncrypt(password)
 		}
+		if OverallSign {
+			if privateKey == "" {
+				fmt.Println("private key is required")
+			}
+			adca.WithOverallSign()
+		}
 		err := adca.Assembly()
 		if err != nil {
 			fmt.Println(err)
@@ -57,4 +64,5 @@ func init() {
 	makeCmd.Flags().BoolVarP(&isEncrypt, "encrypt", "c", false, "encrypt the package")
 	makeCmd.Flags().StringVarP(&privateKey, "private-key", "k", "", "private key")
 	makeCmd.Flags().StringVarP(&password, "password", "p", "", "password")
+	makeCmd.Flags().BoolVarP(&OverallSign, "overall-sign", "o", false, "sign the package with overall sign")
 }

@@ -15,7 +15,6 @@ func SignFile(privateKey *ecdsa.PrivateKey, file *os.File) ([]byte, error) {
 		return nil, err
 	}
 	fileHash := hash.Sum(nil)
-
 	signature, err := ecdsa.SignASN1(rand.Reader, privateKey, fileHash)
 	if err != nil {
 		return nil, err
