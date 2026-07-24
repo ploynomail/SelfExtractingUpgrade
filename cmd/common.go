@@ -7,10 +7,6 @@ import (
 	"fmt"
 )
 
-func FmtError(err error) {
-	fmt.Println(err)
-}
-
 func FmtPrivateKey(privateKey *ecdsa.PrivateKey) error {
 	keyBytes, err := x509.MarshalECPrivateKey(privateKey)
 	if err != nil {

@@ -1,6 +1,7 @@
 package logic
 
 import (
+	"crypto/rand"
 	"encoding/hex"
 	"fmt"
 	"os"
@@ -12,38 +13,38 @@ import (
 )
 
 type AutoDeCompressAssembly struct {
-	TargetPath  string // 压缩时输出的文件，解压时输入的文件
-	Path        string // 压缩时输入的文件目录，解压时输出的文件目录
-	IsSign      bool   // 是否需要签名
-	OverallSign bool   // 是否需要整体签名
-	PrivateKey  string // 私钥
-	Isencrypt   bool   // 是否需要加密
-	Password    string // 加密密码
+	TargetPath    string
+	Path          string
+	SenderKey     string
+	SenderPub     string
+	RecipientPub  string
+	IsOverallSign bool
 }
 
 func NewAutoDeCompressAssembly(path, targetpath string) *AutoDeCompressAssembly {
 	return &AutoDeCompressAssembly{
 		Path:       path,
 		TargetPath: targetpath,
-		IsSign:     false,
-		Isencrypt:  false,
 	}
 }
 
-func (c *AutoDeCompressAssembly) WithSign(privateKey string) *AutoDeCompressAssembly {
-	c.IsSign = true
-	c.PrivateKey = privateKey
+func (c *AutoDeCompressAssembly) WithSenderKey(senderKey string) *AutoDeCompressAssembly {
+	c.SenderKey = senderKey
 	return c
 }
 
-func (c *AutoDeCompressAssembly) WithEncrypt(password string) *AutoDeCompressAssembly {
-	c.Isencrypt = true
-	c.Password = password
+func (c *AutoDeCompressAssembly) WithSenderPub(senderPub string) *AutoDeCompressAssembly {
+	c.SenderPub = senderPub
+	return c
+}
+
+func (c *AutoDeCompressAssembly) WithRecipientPub(recipientPub string) *AutoDeCompressAssembly {
+	c.RecipientPub = recipientPub
 	return c
 }
 
 func (c *AutoDeCompressAssembly) WithOverallSign() *AutoDeCompressAssembly {
-	c.OverallSign = true
+	c.IsOverallSign = true
 	return c
 }
 
@@ -53,93 +54,125 @@ func (c *AutoDeCompressAssembly) Assembly() error {
 	if err != nil {
 		return err
 	}
-	// 生成压缩包
+
+	// Load keys
+	gk := keys.NewGenerateEcdsaKeys()
+	senderPriv, err := gk.LoadPrivateKey(c.SenderKey)
+	if err != nil {
+		return fmt.Errorf("load sender private key: %w", err)
+	}
+	senderPub, err := gk.LoadPublicKey(c.SenderPub)
+	if err != nil {
+		return fmt.Errorf("load sender public key: %w", err)
+	}
+	if !senderPub.Equal(&senderPriv.PublicKey) {
+		return fmt.Errorf("sender public key does not match sender private key")
+	}
+	recipientPub, err := gk.LoadPublicKey(c.RecipientPub)
+	if err != nil {
+		return fmt.Errorf("load recipient public key: %w", err)
+	}
+
+	// Generate random 32-byte session key for payload AES encryption
+	sessionKey := make([]byte, 32)
+	if _, err := rand.Read(sessionKey); err != nil {
+		return fmt.Errorf("generate session key: %w", err)
+	}
+
+	// Compress payload
 	comp := compress.NewCompressor(c.Path, c.TargetPath)
 	if err := comp.Compress(); err != nil {
 		return err
 	}
-	// 生成加密
-	if c.Isencrypt {
-		key := []byte(c.Password)
-		f, err := os.ReadFile(c.TargetPath)
-		if err != nil {
-			return err
-		}
-		encrypted, err := encrypt(key, IV, f)
-		if err != nil {
-			return err
-		}
-		if err := os.WriteFile(c.TargetPath, encrypted, 0755); err != nil {
-			return err
-		}
-		fmt.Printf("Encryption Key:%s\n", hex.EncodeToString(key))
-		fmt.Printf("Encryption IV:%s\n", hex.EncodeToString(IV))
-	}
-	// 生成签名
-	var signature []byte
-	if c.IsSign {
-		keys := keys.NewGenerateEcdsaKeys()
-		privateKey, err := keys.LoadPrivateKey(c.PrivateKey)
-		if err != nil {
-			return err
-		}
-		f, err := os.Open(c.TargetPath)
-		if err != nil {
-			return err
-		}
-		signature, err = signatureverify.SignFile(privateKey, f)
-		if err != nil {
-			return err
-		}
-	}
-	// 生成最终文件
-	f, err := os.ReadFile(c.TargetPath)
+
+	// Encrypt payload with AES-256-CBC (IV prepended)
+	plainPayload, err := os.ReadFile(c.TargetPath)
 	if err != nil {
 		return err
 	}
-	var data = struct {
-		Isencrypt bool
-		Signature string
-		IsSign    bool
+	cipherPayload, err := encrypt(sessionKey, plainPayload)
+	if err != nil {
+		return fmt.Errorf("encrypt payload: %w", err)
+	}
+	if err := os.WriteFile(c.TargetPath, cipherPayload, 0644); err != nil {
+		return err
+	}
+
+	// Sign cipher payload
+	sigFile, err := os.Open(c.TargetPath)
+	if err != nil {
+		return err
+	}
+	signature, err := signatureverify.SignFile(senderPriv, sigFile)
+	sigFile.Close()
+	if err != nil {
+		return fmt.Errorf("sign payload: %w", err)
+	}
+
+	// Encrypt session key with recipient's public key via ECIES
+	ephemeralPubPEM, encryptedKeyHex, ivHex, err := ECIESEncryptSessionKey(recipientPub, sessionKey)
+	if err != nil {
+		return fmt.Errorf("encrypt session key: %w", err)
+	}
+
+	// Read sender public key PEM content to embed
+	senderPubPEM, err := os.ReadFile(c.SenderPub)
+	if err != nil {
+		return fmt.Errorf("read sender public key: %w", err)
+	}
+
+	data := struct {
+		SenderPub     string
+		EphemeralPub  string
+		EncryptedKey  string
+		IV            string
+		Signature     string
 	}{
-		Isencrypt: c.Isencrypt,
-		Signature: hex.EncodeToString(signature),
-		IsSign:    c.IsSign,
+		SenderPub:    string(senderPubPEM),
+		EphemeralPub: string(ephemeralPubPEM),
+		EncryptedKey: encryptedKeyHex,
+		IV:           ivHex,
+		Signature:    hex.EncodeToString(signature),
 	}
-	// fmt.Println(sctm.ExecuteTemplate(os.Stdout, "AutoDeCompressAssembly", data))
-	// 生成模板写入文件
+
 	selfRunfile, err := os.Create(c.TargetPath + ".run")
-	selfRunfile.Chmod(0755)
 	if err != nil {
-		return err
+		return fmt.Errorf("create .run file: %w", err)
 	}
-	defer selfRunfile.Close()
+	if err := selfRunfile.Chmod(0755); err != nil {
+		selfRunfile.Close()
+		return fmt.Errorf("chmod .run file: %w", err)
+	}
 	if err := sctm.ExecuteTemplate(selfRunfile, "AutoDeCompressAssembly", data); err != nil {
+		selfRunfile.Close()
 		return err
 	}
-	// 写入压缩包
-	if _, err := selfRunfile.Write(f); err != nil {
+	if _, err := selfRunfile.Write(cipherPayload); err != nil {
+		selfRunfile.Close()
 		return err
 	}
-	selfRunfile.Sync()
+	if err := selfRunfile.Sync(); err != nil {
+		selfRunfile.Close()
+		return err
+	}
 	selfRunfile.Close()
 
-	var overallSignature []byte
-	if c.OverallSign {
-		keys := keys.NewGenerateEcdsaKeys()
-		privateKey, err := keys.LoadPrivateKey(c.PrivateKey)
-		if err != nil {
-			return err
-		}
+	if c.IsOverallSign {
 		ff, err := os.Open(c.TargetPath + ".run")
 		if err != nil {
 			return err
 		}
-		overallSignature, err = signatureverify.SignFile(privateKey, ff)
+		overallSignature, err := signatureverify.SignFile(senderPriv, ff)
+		ff.Close()
 		if err != nil {
 			return err
 		}
-		fmt.Println("Overall Signature:", hex.EncodeToString(overallSignature))
+		sigPath := c.TargetPath + ".run.sig"
+		if err := os.WriteFile(sigPath, overallSignature, 0644); err != nil {
+			return fmt.Errorf("write overall signature file: %w", err)
+		}
+		fmt.Printf("Overall signature saved to: %s\n", sigPath)
 	}
+
 	return nil
 }

@@ -1,6 +1,3 @@
-/*
-Copyright © 2024 NAME HERE <EMAIL ADDRESS>
-*/
 package cmd
 
 import (
@@ -12,57 +9,49 @@ import (
 
 var destPath string
 var sourcePath string
-var isSign bool
-var OverallSign bool
-var isEncrypt bool
-var privateKey string
-var password string
+var senderKey string
+var senderPub string
+var recipientPub string
+var isOverallSign bool
 
-// makeCmd represents the make command
 var makeCmd = &cobra.Command{
 	Use:   "make",
 	Short: "Make a new self extracting upgrade package",
-	Long:  `This command will create a new self extracting upgrade package`,
-	Run: func(cmd *cobra.Command, args []string) {
+	Long:  `This command will create a new self extracting upgrade package. Encryption and signing are mandatory.`,
+	RunE: func(cmd *cobra.Command, args []string) error {
 		if sourcePath == "" {
-			fmt.Println("source path is required")
+			return fmt.Errorf("source path (-s) is required")
 		}
 		if destPath == "" {
-			fmt.Println("destination path is required")
+			return fmt.Errorf("destination path (-d) is required")
 		}
-		adca := logic.NewAutoDeCompressAssembly(sourcePath, destPath)
-		if isSign {
-			if privateKey == "" {
-				fmt.Println("private key is required")
-			}
-			adca.WithSign(privateKey)
+		if senderKey == "" {
+			return fmt.Errorf("sender private key (-k) is required")
 		}
-		if isEncrypt {
-			if password == "" {
-				fmt.Println("password is required")
-			}
-			adca.WithEncrypt(password)
+		if senderPub == "" {
+			return fmt.Errorf("sender public key (--sender-pub) is required")
 		}
-		if OverallSign {
-			if privateKey == "" {
-				fmt.Println("private key is required")
-			}
+		if recipientPub == "" {
+			return fmt.Errorf("recipient public key (-r) is required")
+		}
+
+		adca := logic.NewAutoDeCompressAssembly(sourcePath, destPath).
+			WithSenderKey(senderKey).
+			WithSenderPub(senderPub).
+			WithRecipientPub(recipientPub)
+		if isOverallSign {
 			adca.WithOverallSign()
 		}
-		err := adca.Assembly()
-		if err != nil {
-			fmt.Println(err)
-		}
+		return adca.Assembly()
 	},
 }
 
 func init() {
 	rootCmd.AddCommand(makeCmd)
 	makeCmd.Flags().StringVarP(&destPath, "dest", "d", "", "destination file name")
-	makeCmd.Flags().StringVarP(&sourcePath, "source", "s", "", "source file path")
-	makeCmd.Flags().BoolVarP(&isSign, "sign", "i", false, "sign the package")
-	makeCmd.Flags().BoolVarP(&isEncrypt, "encrypt", "c", false, "encrypt the package")
-	makeCmd.Flags().StringVarP(&privateKey, "private-key", "k", "", "private key")
-	makeCmd.Flags().StringVarP(&password, "password", "p", "", "password")
-	makeCmd.Flags().BoolVarP(&OverallSign, "overall-sign", "o", false, "sign the package with overall sign")
+	makeCmd.Flags().StringVarP(&sourcePath, "source", "s", "", "source directory path")
+	makeCmd.Flags().StringVarP(&senderKey, "sender-key", "k", "", "sender private key file (for signing)")
+	makeCmd.Flags().StringVar(&senderPub, "sender-pub", "", "sender public key file (embedded for verification)")
+	makeCmd.Flags().StringVarP(&recipientPub, "recipient-pub", "r", "", "recipient public key file (for encrypting session key)")
+	makeCmd.Flags().BoolVarP(&isOverallSign, "overall-sign", "O", false, "sign the entire .run file (outputs .sig)")
 }

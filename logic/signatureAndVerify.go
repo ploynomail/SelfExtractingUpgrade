@@ -10,13 +10,9 @@ type GenerateKeys interface {
 	GenerateKeyPair() error
 	SavePrivateKey(filename string) error
 	LoadPrivateKey(filename string) (*ecdsa.PrivateKey, error)
+	LoadPublicKey(filename string) (*ecdsa.PublicKey, error)
 	GetPrivateKey() *ecdsa.PrivateKey
 	GetPublicKey() *ecdsa.PublicKey
-}
-
-type SignatureAndVerify interface {
-	Sign() error
-	Verify() error
 }
 
 func NewGenerateKeys() GenerateKeys {
